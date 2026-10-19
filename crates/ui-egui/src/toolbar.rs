@@ -58,6 +58,10 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let canvas = app.canvas.rect;
     app.ui.actions_rect = None;
+    if cfg!(target_arch = "wasm32") && ui.ctx().content_rect().width() < 760.0 {
+        mobile_toolbar(app, ui, canvas, &t);
+        return;
+    }
     // A file you can't edit now (view only, or on its way to a server): moving around only.
     if let Some(why) = app.session.active_read_only() {
         view_only_toolbar(app, ui, why);
@@ -74,6 +78,30 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
         return;
     }
     main_toolbar(app, ui, canvas, &t);
+}
+
+/// Compact phone toolbar: desktop's full-width pill doesn't fit narrow viewports.
+fn mobile_toolbar(app: &mut FigApp, ui: &mut Ui, canvas: Rect, t: &Tokens) {
+    let width = (canvas.width() - 20.0).min(348.0).max(160.0);
+    let x = (canvas.center().x - width / 2.0).max(canvas.left() + 4.0);
+    let y = (canvas.bottom() - 62.0).max(canvas.top() + 8.0);
+    egui::Area::new(egui::Id::new("figcraft-mobile-tools"))
+        .fixed_pos(pos2(x, y))
+        .order(egui::Order::Foreground)
+        .show(ui.ctx(), |ui| {
+            egui::Frame::NONE.fill(t.panel).stroke(Stroke::new(1.0, t.border))
+                .corner_radius(CornerRadius::same(10))
+                .inner_margin(egui::Margin::same(6))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        for (label, tool) in [("Move", "move"), ("Frame", "frame"), ("Rect", "rectangle"), ("Text", "text"), ("Hand", "hand")] {
+                            if ui.small_button(label).clicked() {
+                                app.run("tool.set", json!({"tool": tool}));
+                            }
+                        }
+                    });
+                });
+        });
 }
 
 /// The main toolbar pill's width: the Actions palette matches it so the two read as one bar.
