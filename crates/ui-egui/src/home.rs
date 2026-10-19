@@ -140,6 +140,11 @@ fn listed(ui: &mut Ui, t: &Tokens, id: Id, height: f32, row: &FileRow) -> bool {
 pub fn show(app: &mut FigApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     dropped(app, ui.ctx());
+    if ui.ctx().content_rect().width() < 720.0 {
+        show_phone(app, ui, &t);
+        crate::drop_overlay(ui.ctx(), ui.ctx().content_rect(), tr("Drop to open"));
+        return;
+    }
     egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.panel)).show(ui, |ui| {
         let rect = ui.max_rect();
         let left = Rect::from_min_size(rect.min, vec2(SIDEBAR, rect.height()));
@@ -172,6 +177,57 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
     });
     // The whole window is the drop target, not only the canvas.
     crate::drop_overlay(ui.ctx(), ui.ctx().content_rect(), tr("Drop to open"));
+}
+
+
+/// Home navigation without the fixed 240pt sidebar: on phones, the file actions and
+/// templates use the full screen width, with section tabs and search stacked at the top.
+fn show_phone(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
+    egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.panel)).show(ui, |ui| {
+        egui::ScrollArea::vertical()
+            .id_salt("home-phone")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                egui::Frame::NONE.inner_margin(egui::Margin::symmetric(14, 16)).show(ui, |ui| {
+                    ui.set_max_width((ui.available_width() - 4.0).max(250.0));
+                    ui.label(egui::RichText::new("FigCraft").font(semibold(17.0)).color(t.text));
+                    ui.add_space(8.0);
+                    ui.horizontal_wrapped(|ui| {
+                        for (section, _, label) in Section::ALL {
+                            let selected = app.ui.home_view.section == section;
+                            if ui.selectable_label(selected, tr(label)).clicked() {
+                                app.ui.home_view.section = section;
+                                app.ui.home_view.file_query.clear();
+                            }
+                        }
+                    });
+                    ui.add_space(10.0);
+                    let search_width = ui.available_width().min(420.0);
+                    let response = widgets::text_input(
+                        ui,
+                        Id::new("home_file_search"),
+                        &mut app.ui.home_view.file_query,
+                        search_width,
+                        tr("Search files and templates"),
+                    );
+                    a11y::text(&response, tr("Search files and templates"), &app.ui.home_view.file_query);
+                    ui.add_space(20.0);
+                    if !app.ui.home_view.file_query.trim().is_empty() {
+                        search_results(app, ui, t);
+                    } else {
+                        match app.ui.home_view.section {
+                            Section::Recents => recents(app, ui, t),
+                            Section::Templates => templates(app, ui, t),
+                            Section::Online => {
+                                let area = ui.available_rect_before_wrap();
+                                crate::online::section(app, ui, area, t);
+                                opened_join(app);
+                            }
+                        }
+                    }
+                });
+            });
+    });
 }
 
 /// Files dropped on the home screen: each one the app opens becomes a document of its own (the
@@ -334,10 +390,18 @@ fn action_card(ui: &mut Ui, t: &Tokens, icon: Icon, title: &str, sub: &str) -> b
 fn recents(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
     heading(ui, t, tr("Recents"));
     let (mut new_file, mut open) = (false, false);
-    ui.horizontal(|ui| {
-        new_file = action_card(ui, t, Icon::Plus, tr("New design file"), tr("Start from a blank canvas"));
-        open = action_card(ui, t, Icon::Page, tr("Open file"), tr("Open .figcraft, .svg or images"));
-    });
+    if ui.available_width() < 570.0 {
+        ui.vertical(|ui| {
+            new_file = action_card(ui, t, Icon::Plus, tr("New design file"), tr("Start from a blank canvas"));
+            ui.add_space(8.0);
+            open = action_card(ui, t, Icon::Page, tr("Open file"), tr("Open .figcraft, .svg or images"));
+        });
+    } else {
+        ui.horizontal(|ui| {
+            new_file = action_card(ui, t, Icon::Plus, tr("New design file"), tr("Start from a blank canvas"));
+            open = action_card(ui, t, Icon::Page, tr("Open file"), tr("Open .figcraft, .svg or images"));
+        });
+    }
     if new_file {
         app.run("file.new", json!({}));
         app.ui.home = false;
@@ -477,6 +541,28 @@ fn matches(template: &Template, query: &str, kind: Option<Kind>) -> bool {
 
 fn templates(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
     heading(ui, t, tr("Templates"));
+    if ui.available_width() < 570.0 {
+        let width = ui.available_width().min(380.0);
+        let search = widgets::text_input(
+            ui, Id::new("home_template_search"), &mut app.ui.home_view.query, width, tr("Search templates"),
+        );
+        a11y::text(&search, tr("Search templates"), &app.ui.home_view.query);
+        ui.add_space(8.0);
+        let shown = app.ui.home_view.kind.map_or(tr("All"), |k| tr(k.label()));
+        egui::ComboBox::from_id_salt("phone-template-kind")
+            .selected_text(shown)
+            .width(width)
+            .show_ui(ui, |ui| {
+                if ui.selectable_label(app.ui.home_view.kind.is_none(), tr("All")).clicked() {
+                    app.ui.home_view.kind = None;
+                }
+                for kind in Kind::ALL {
+                    if ui.selectable_label(app.ui.home_view.kind == Some(kind), tr(kind.label())).clicked() {
+                        app.ui.home_view.kind = Some(kind);
+                    }
+                }
+            });
+    } else {
     ui.horizontal(|ui| {
         let search = widgets::text_input(ui, Id::new("home_template_search"), &mut app.ui.home_view.query, 260.0, tr("Search templates"));
         a11y::text(&search, tr("Search templates"), &app.ui.home_view.query);
@@ -489,6 +575,7 @@ fn templates(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
             }
         });
     });
+    }
     ui.add_space(24.0);
     let (query, kind) = (app.ui.home_view.query.clone(), app.ui.home_view.kind);
     let shown: Vec<&Template> = TEMPLATES.iter().filter(|x| matches(x, &query, kind)).collect();
