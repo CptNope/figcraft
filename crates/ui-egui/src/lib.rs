@@ -1467,7 +1467,24 @@ impl FigApp {
             return;
         }
         let hidden = self.session.ds().map(|d| d.view.ui_hidden).unwrap_or(false);
-        if !hidden {
+        let phone = cfg!(target_arch = "wasm32") && ctx.content_rect().width() < 760.0;
+        // Narrow screens show one workspace pane at a time. Desktop preferences stay intact.
+        let pane_id = egui::Id::new("figcraft-mobile-pane");
+        let mut pane = ctx.data(|d| d.get_temp::<u8>(pane_id)).unwrap_or(0);
+        if phone && !hidden {
+            egui::Panel::top("phone_workspace_tabs").exact_size(40.0)
+                .frame(egui::Frame::NONE.fill(t.panel)).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        for (index, label) in [(0, "Canvas"), (1, "Layers"), (2, "Design")] {
+                            if ui.selectable_label(pane == index, label).clicked() {
+                                pane = index;
+                            }
+                        }
+                    });
+                });
+            ctx.data_mut(|d| d.insert_temp(pane_id, pane));
+        }
+        if !hidden && !phone {
             egui::Panel::left("left_rail")
                 .exact_size(56.0)
                 .resizable(false)
@@ -1478,12 +1495,18 @@ impl FigApp {
                 });
         }
         // The panels are as wide as asked, less in a window too small for them and the canvas.
-        let left_open = !hidden && !self.ui.left_collapsed;
-        let (left_w, right_w) = fit_panels(ui.available_width(), left_open.then_some(self.ui.left_width), self.ui.right_width);
+        let left_open = !hidden && if phone { pane == 1 } else { !self.ui.left_collapsed };
+        let (left_w, right_w) = if phone {
+            (ui.available_width(), ui.available_width())
+        } else {
+            fit_panels(ui.available_width(), left_open.then_some(self.ui.left_width), self.ui.right_width)
+        };
         let rows = ui.available_rect_before_wrap().y_range();
         let mut edges: Vec<(&str, f32, f32, f32)> = Vec::new();
         if left_open {
-            edges.push(("left", ui.available_rect_before_wrap().min.x + left_w, left_w, 1.0));
+            if !phone {
+                edges.push(("left", ui.available_rect_before_wrap().min.x + left_w, left_w, 1.0));
+            }
             egui::Panel::left("left_panel")
                 .resizable(false)
                 .exact_size(left_w)
@@ -1498,8 +1521,10 @@ impl FigApp {
                     layers::left_panel(self, ui)
                 });
         }
-        if !hidden {
-            edges.push(("right", ui.available_rect_before_wrap().max.x - right_w, right_w, -1.0));
+        if !hidden && (!phone || pane == 2) {
+            if !phone {
+                edges.push(("right", ui.available_rect_before_wrap().max.x - right_w, right_w, -1.0));
+            }
             egui::Panel::right("right_panel")
                 .resizable(false)
                 .exact_size(right_w)
@@ -1519,7 +1544,7 @@ impl FigApp {
             let mut worker = worker.unwrap_or_else(|| render_worker::Worker::new(ctx.clone()));
             canvas::show(self, ui, &mut worker);
             self.worker = Some(worker);
-            if !hidden {
+            if !hidden && (!phone || pane == 0) {
                 ui.scope_builder(egui::UiBuilder::new().id_salt("toolbar"), |ui| {
                     a11y::container(ui, egui::accesskit::Role::Toolbar, i18n::tr("Tools"));
                     toolbar::show(self, ui);
